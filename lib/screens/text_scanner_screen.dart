@@ -28,6 +28,10 @@ class _TextScannerScreenState extends State<TextScannerScreen>
   String? _errorMessage;
   TextRecognitionScript _selectedScript = TextRecognitionScript.japanese;
 
+  Size? _imageSize;
+  InputImageRotation? _imageRotation;
+  int? _sensorOrientation;
+
   @override
   void initState() {
     super.initState();
@@ -137,6 +141,9 @@ class _TextScannerScreenState extends State<TextScannerScreen>
       if (mounted) {
         setState(() {
           _recognizedText = result;
+          _imageSize = inputImage.metadata?.size;
+          _imageRotation = inputImage.metadata?.rotation;
+          _sensorOrientation = camera.sensorOrientation;
         });
       }
     } catch (e) {
@@ -387,7 +394,26 @@ class _TextScannerScreenState extends State<TextScannerScreen>
       child: Center(
         child: AspectRatio(
           aspectRatio: 1 / controller.value.aspectRatio,
-          child: CameraPreview(controller),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  CameraPreview(controller),
+                  if (_recognizedText != null && _imageSize != null)
+                    CustomPaint(
+                      painter: TextOverlayPainter(
+                        recognizedText: _recognizedText!,
+                        imageSize: _imageSize!,
+                        rotation: _imageRotation ?? InputImageRotation.rotation0deg,
+                        previewSize: Size(constraints.maxWidth, constraints.maxHeight),
+                        sensorOrientation: _sensorOrientation ?? 90,
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
@@ -594,5 +620,159 @@ class _TextScannerScreenState extends State<TextScannerScreen>
   String _formatCornerPoints(List<Point<int>> points) {
     if (points.isEmpty) return '[]';
     return points.map((p) => '(${p.x},${p.y})').join(', ');
+  }
+}
+
+class TextOverlayPainter extends CustomPainter {
+  final RecognizedText recognizedText;
+  final Size imageSize;
+  final InputImageRotation rotation;
+  final Size previewSize;
+  final int sensorOrientation;
+
+  TextOverlayPainter({
+    required this.recognizedText,
+    required this.imageSize,
+    required this.rotation,
+    required this.previewSize,
+    required this.sensorOrientation,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Block colors
+    final blockRectPaint = Paint()
+      ..color = Colors.green.withOpacity(0.3)
+      ..style = PaintingStyle.fill;
+    final blockPointPaint = Paint()
+      ..color = Colors.green
+      ..style = PaintingStyle.fill;
+
+    // Line colors
+    final lineRectPaint = Paint()
+      ..color = Colors.orange.withOpacity(0.3)
+      ..style = PaintingStyle.fill;
+    final linePointPaint = Paint()
+      ..color = Colors.orange
+      ..style = PaintingStyle.fill;
+
+    // Element colors
+    final elementRectPaint = Paint()
+      ..color = Colors.purple.withOpacity(0.3)
+      ..style = PaintingStyle.fill;
+    final elementPointPaint = Paint()
+      ..color = Colors.purple
+      ..style = PaintingStyle.fill;
+
+    for (final block in recognizedText.blocks) {
+      // Draw block rect from corner points
+      if (block.cornerPoints.isNotEmpty) {
+        final rect = _rectFromCornerPoints(block.cornerPoints);
+        canvas.drawRect(rect, blockRectPaint);
+      }
+
+      // Draw block corner points
+      for (final point in block.cornerPoints) {
+        final transformed = _transformPoint(point);
+        canvas.drawCircle(transformed, 6, blockPointPaint);
+      }
+
+      for (final line in block.lines) {
+        // Draw line rect from corner points
+        if (line.cornerPoints.isNotEmpty) {
+          final rect = _rectFromCornerPoints(line.cornerPoints);
+          canvas.drawRect(rect, lineRectPaint);
+        }
+
+        // Draw line corner points
+        for (final point in line.cornerPoints) {
+          final transformed = _transformPoint(point);
+          canvas.drawCircle(transformed, 4, linePointPaint);
+        }
+
+        for (final element in line.elements) {
+          // Draw element rect from corner points
+          if (element.cornerPoints.isNotEmpty) {
+            final rect = _rectFromCornerPoints(element.cornerPoints);
+            canvas.drawRect(rect, elementRectPaint);
+          }
+
+          // Draw element corner points
+          for (final point in element.cornerPoints) {
+            final transformed = _transformPoint(point);
+            canvas.drawCircle(transformed, 2, elementPointPaint);
+          }
+        }
+      }
+    }
+  }
+
+  Offset _transformPoint(Point<int> point) {
+    double x = point.x.toDouble();
+    double y = point.y.toDouble();
+
+    // imageSize is the raw camera image size (e.g., 1920x1080 landscape)
+    // ML Kit coordinates are in raw image space (not rotated)
+    // Preview shows the rotated image (portrait for 90-degree sensor)
+
+    // For Android back camera with 90-degree sensor orientation:
+    // - Raw image: width=1920, height=1080 (landscape)
+    // - Preview shows: width=1080, height=1920 (portrait)
+    // - ML Kit returns coords in raw space
+    // - Need to transform: (x, y) -> (y, width - x) for 90-degree rotation
+
+    double transformedX, transformedY;
+    Size displaySize;
+
+    switch (sensorOrientation) {
+      case 90:
+        // Rotate 90 degrees clockwise
+        transformedX = imageSize.height - y;
+        transformedY = x;
+        displaySize = Size(imageSize.height, imageSize.width);
+        break;
+      case 180:
+        transformedX = imageSize.width - x;
+        transformedY = imageSize.height - y;
+        displaySize = imageSize;
+        break;
+      case 270:
+        // Rotate 270 degrees clockwise (= 90 counter-clockwise)
+        transformedX = y;
+        transformedY = imageSize.width - x;
+        displaySize = Size(imageSize.height, imageSize.width);
+        break;
+      default: // 0
+        transformedX = x;
+        transformedY = y;
+        displaySize = imageSize;
+        break;
+    }
+
+    // Scale to preview size
+    final scaleX = previewSize.width / displaySize.width;
+    final scaleY = previewSize.height / displaySize.height;
+
+    return Offset(transformedX * scaleX, transformedY * scaleY);
+  }
+
+  Rect _rectFromCornerPoints(List<Point<int>> cornerPoints) {
+    // Transform all corner points and create bounding rect
+    final transformedPoints = cornerPoints.map((p) => _transformPoint(p)).toList();
+
+    final allX = transformedPoints.map((p) => p.dx).toList();
+    final allY = transformedPoints.map((p) => p.dy).toList();
+
+    final left = allX.reduce((a, b) => a < b ? a : b);
+    final top = allY.reduce((a, b) => a < b ? a : b);
+    final right = allX.reduce((a, b) => a > b ? a : b);
+    final bottom = allY.reduce((a, b) => a > b ? a : b);
+
+    return Rect.fromLTRB(left, top, right, bottom);
+  }
+
+  @override
+  bool shouldRepaint(covariant TextOverlayPainter oldDelegate) {
+    return recognizedText != oldDelegate.recognizedText;
   }
 }
