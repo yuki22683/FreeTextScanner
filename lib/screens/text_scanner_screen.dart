@@ -31,6 +31,7 @@ class _TextScannerScreenState extends State<TextScannerScreen>
   Size? _imageSize;
   InputImageRotation? _imageRotation;
   int? _sensorOrientation;
+  bool _isLogExpanded = false;
 
   @override
   void initState() {
@@ -353,13 +354,9 @@ class _TextScannerScreenState extends State<TextScannerScreen>
     return Column(
       children: [
         Expanded(
-          flex: 1,
           child: _buildCameraPreview(controller),
         ),
-        Expanded(
-          flex: 1,
-          child: _buildTextDisplay(),
-        ),
+        _buildTextDisplay(),
         _buildControlBar(),
       ],
     );
@@ -420,36 +417,57 @@ class _TextScannerScreenState extends State<TextScannerScreen>
   }
 
   Widget _buildTextDisplay() {
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      height: _isLogExpanded ? 300 : 50,
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
       color: Colors.grey[100],
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.text_fields, size: 20),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '認識テキスト (${_getScriptName(_selectedScript)})',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
+          // Header (always visible, clickable)
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                _isLogExpanded = !_isLogExpanded;
+              });
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              color: Colors.grey[200],
+              child: Row(
+                children: [
+                  Icon(
+                    _isLogExpanded ? Icons.expand_less : Icons.expand_more,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.text_fields, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '認識テキスト (${_getScriptName(_selectedScript)})',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  if (_recognizedText != null)
+                    Text(
+                      '${_recognizedText!.blocks.length} blocks',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                ],
               ),
-              if (_recognizedText != null)
-                Text(
-                  '${_recognizedText!.blocks.length} blocks',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-            ],
-          ),
-          const Divider(),
-          Expanded(
-            child: SingleChildScrollView(
-              child: _buildRecognizedText(),
             ),
           ),
+          // Content (visible when expanded)
+          if (_isLogExpanded)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: SingleChildScrollView(
+                  child: _buildRecognizedText(),
+                ),
+              ),
+            ),
         ],
       ),
     );
