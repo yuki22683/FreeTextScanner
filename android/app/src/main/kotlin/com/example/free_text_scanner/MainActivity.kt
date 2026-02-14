@@ -1,0 +1,5 @@
+package com.example.free_text_scanner
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity: FlutterActivity()
